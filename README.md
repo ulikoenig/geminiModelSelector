@@ -75,13 +75,15 @@ UI). Menu entries with a **lock icon** are hidden.
 
 ## Troubleshooting
 
-- **Nothing happens:** Open the browser console and look for the line `[gemini-best-model] <version> loaded (...)`. The
+- **Nothing happens:** A userscript manager injects a script only when a page loads, so reload the page (on a phone:
+  open it afresh) after installing or updating the script; a tab that was already open stays untouched. Then open the
+  browser console and look for the line `[gemini-best-model] <version> loaded (...)`. The
   script prints it once per page load, without any switch. If it is missing, the script does not run on the page
   (Tampermonkey icon: is the script listed and enabled for the tab?). If it is there, set the debug flag (see Debug),
   reload and read the log: it names the step that failed.
-- **Phone (Firefox on Android), no console:** First check in the userscript manager's menu, with the Gemini tab open,
-  that this script is listed for the page, enabled, and which version it is (the log panel needs 1.0.5 or newer).
-  Then open the page with `?gbm-debug` as described under Debug. **No panel at all:** the script does not run on the
+- **Phone (Firefox on Android), no console:** First reload as above, then check in the userscript manager's menu, with
+  the Gemini tab open, that this script is listed for the page, enabled, and which version it is (the log panel needs
+  1.0.5 or newer). Then open the page with `?gbm-debug` as described under Debug. **No panel at all:** the script does not run on the
   page: manager, match pattern or version, not the picker. **Panel there:** read it; the first lines say whether the
   picker was found, and after about 10 s "no usable model picker" names what the script sees instead. Copy the log
   into a bug report.
@@ -118,11 +120,13 @@ entry "Code und komplexe Aufgaben"; the menu shows Automatic, "Hilfe im Alltag" 
 **Phone:** The picker and its menu at 360 px width with the user agent of Firefox on Android were measured on the real
 page, signed out (Chromium with touch and device pixel ratio 3 as the stand-in): the picker sits in the header, the
 menu is the same `gem-menu` popover inside `bard-mode-switcher`, and the script runs through there in the E2E test
-(picker found, menu read, locked entries hidden, nothing clicked, menu closed again). **Open problem:** a user report
-with real Firefox on Android (signed in, script 1.0.4) shows the thinking effort still at "Niedrig" and the locked
+(picker found, menu read, locked entries hidden, nothing clicked, menu closed again). **Live check, Firefox on Android**
+(signed in, 2026-11-23): after the page was opened afresh the header read "Neon Hoch", so the model and the thinking
+effort were set. An earlier check on the same phone (script 1.0.4) had shown the effort at "Niedrig" and the locked
 entry "Code und komplexe Aufgaben" still visible. Hiding is done by the stylesheet whenever the script runs, so the
-script most likely did not run on that page at all, but that is not established. Version 1.0.5 adds the log panel to
-find out (see Debug). **Firefox on Android itself is not covered by any test.**
+script most likely had not run on that page at all; the cause was not established, and which version ran in the second
+check was not recorded. Version 1.0.5 adds the log panel for cases like this (see Debug). **Firefox on Android itself
+is not covered by any automated test.**
 
 ## Code and localization
 

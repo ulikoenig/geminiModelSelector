@@ -81,13 +81,15 @@ untersten freigeschalteten Eintrag der Modellauswahl) und den **höchsten verfü
 
 ## Fehlersuche
 
-- **Nichts passiert:** In der Browserkonsole nach der Zeile `[gemini-best-model] <Version> geladen (...)` suchen. Das
+- **Nichts passiert:** Ein Userscript-Manager schleust ein Skript nur beim Laden einer Seite ein; nach dem Installieren
+  oder Aktualisieren des Skripts die Seite also neu laden (am Handy: neu öffnen), ein schon offener Tab bleibt
+  unberührt. Dann in der Browserkonsole nach der Zeile `[gemini-best-model] <Version> geladen (...)` suchen. Das
   Skript gibt sie einmal je Seitenladung aus, ohne jeden Schalter. Fehlt sie, läuft das Skript auf der Seite nicht
   (Tampermonkey-Symbol: ist das Skript für den Tab aufgeführt und aktiv?). Ist sie da, das Debug-Flag setzen (siehe
   Debug), neu laden und das Log lesen: Es nennt den Schritt, der scheitert.
-- **Handy (Firefox auf Android), keine Konsole:** Zuerst im Menü des Userscript-Managers bei geöffnetem Gemini-Tab
-  prüfen, dass dieses Skript für die Seite aufgeführt und aktiviert ist und welche Version es hat (die Log-Anzeige
-  braucht 1.0.5 oder neuer). Dann die Seite mit `?gbm-debug` öffnen, wie unter Debug beschrieben. **Gar kein Panel:** Das
+- **Handy (Firefox auf Android), keine Konsole:** Zuerst wie oben neu laden, dann im Menü des Userscript-Managers bei
+  geöffnetem Gemini-Tab prüfen, dass dieses Skript für die Seite aufgeführt und aktiviert ist und welche Version es hat
+  (die Log-Anzeige braucht 1.0.5 oder neuer). Dann die Seite mit `?gbm-debug` öffnen, wie unter Debug beschrieben. **Gar kein Panel:** Das
   Skript läuft auf der Seite nicht: Manager, Match-Muster oder Version, nicht die Auswahl. **Panel da:** lesen; die ersten
   Zeilen sagen, ob die Auswahl gefunden wurde, und nach etwa 10 s nennt „Nach 10 s keine nutzbare Modellauswahl“, was
   das Skript stattdessen sieht. Das Log in eine Fehlermeldung kopieren.
@@ -127,12 +129,13 @@ und „Detaillierte Analyse“ sowie „Denkaufwand“ mit „Hoch“ angehakt.
 **Handy:** Die Auswahl und ihr Menü bei 360 px Breite mit dem User-Agent von Firefox auf Android wurden auf der echten
 Seite gemessen, abgemeldet (Chromium mit Touch und Pixeldichte 3 als Ersatz): Die Auswahl sitzt in der Kopfzeile, das
 Menü ist dasselbe `gem-menu`-Popover in `bard-mode-switcher`, und das Skript läuft dort im E2E-Test durch (Auswahl
-gefunden, Menü gelesen, gesperrte Einträge ausgeblendet, nichts geklickt, Menü wieder geschlossen). **Offenes Problem:**
-Ein Nutzerbericht mit echtem Firefox auf Android (angemeldet, Skript 1.0.4) zeigt den Denkaufwand weiter auf „Niedrig“
-und den gesperrten Eintrag „Code und komplexe Aufgaben“ weiter sichtbar. Das Ausblenden übernimmt das Stylesheet, sobald
-das Skript läuft; das Skript lief auf dieser Seite also sehr wahrscheinlich gar nicht, aber das ist nicht belegt.
-Version 1.0.5 bringt die Log-Anzeige, um das herauszufinden (siehe Debug). **Firefox auf Android selbst deckt kein Test
-ab.**
+gefunden, Menü gelesen, gesperrte Einträge ausgeblendet, nichts geklickt, Menü wieder geschlossen). **Live-Prüfung,
+Firefox auf Android** (angemeldet, 23.11.2026): Nach dem frischen Öffnen der Seite zeigte die Kopfzeile „Neon Hoch“,
+Modell und Denkaufwand waren also gesetzt. Eine frühere Prüfung am selben Handy (Skript 1.0.4) hatte den Denkaufwand auf
+„Niedrig“ und den gesperrten Eintrag „Code und komplexe Aufgaben“ weiter sichtbar gezeigt. Das Ausblenden übernimmt das
+Stylesheet, sobald das Skript läuft; das Skript lief auf jener Seite also sehr wahrscheinlich gar nicht. Die Ursache ist
+nicht belegt, und welche Version bei der zweiten Prüfung lief, wurde nicht festgehalten. Version 1.0.5 bringt die
+Log-Anzeige für solche Fälle (siehe Debug). **Firefox auf Android selbst deckt kein automatischer Test ab.**
 
 ## Code und Lokalisierung
 
