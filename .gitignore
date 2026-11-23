@@ -1,0 +1,10 @@
+node_modules/
+# Test profile and saved session hold a live Google sign-in: never commit or share them
+.profile/
+.auth/
+# Screenshots and probe dumps can contain chat titles
+out/
+# Saved copies of the signed-in page and browser consoles hold account data and chat titles
+/login.html
+/saved/
+*.log
