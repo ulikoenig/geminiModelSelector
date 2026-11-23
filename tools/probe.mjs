@@ -5,6 +5,7 @@
 //
 // Usage:  node tools/probe.mjs                          signed out, throw-away profile, 1400x900
 //         node tools/probe.mjs --viewport=870x600       a narrow window (the picker moves into the header)
+//         node tools/probe.mjs --mobile                 a phone: 360x780, touch, user agent of Firefox on Android
 //         node tools/probe.mjs --signed-in              with the profile of "npm run login"
 // Output: out/probe-<signed-out|signed-in>[-WxH].txt (git-ignored, may contain account-specific labels)
 import fs from 'node:fs';
@@ -18,10 +19,11 @@ setTimeout(() => {
 }, 150_000).unref();
 
 const signedIn = process.argv.includes('--signed-in');
+const mobile = process.argv.includes('--mobile');
 const viewportArg = process.argv.find((arg) => arg.startsWith('--viewport='));
-const [width, height] = viewportArg ? viewportArg.slice('--viewport='.length).split('x').map(Number) : [1400, 900];
+const [width, height] = viewportArg ? viewportArg.slice('--viewport='.length).split('x').map(Number) : mobile ? [360, 780] : [1400, 900];
 const viewport = { width, height };
-const tag = `${signedIn ? 'signed-in' : 'signed-out'}${viewportArg ? `-${width}x${height}` : ''}`;
+const tag = `${signedIn ? 'signed-in' : 'signed-out'}${viewportArg || mobile ? `-${width}x${height}` : ''}${mobile ? '-mobile' : ''}`;
 const dumpFile = path.join(outDir, `probe-${tag}.txt`);
 fs.writeFileSync(dumpFile, '');
 const dump = (...parts) => fs.appendFileSync(dumpFile, parts.join(' ') + '\n');
@@ -109,7 +111,7 @@ function openThings() {
     }));
 }
 
-const { context, close } = signedIn ? { context: await launchSignedIn({ viewport }), close: null } : await launchAnonymous({ viewport });
+const { context, close } = signedIn ? { context: await launchSignedIn({ viewport, mobile }), close: null } : await launchAnonymous({ viewport, mobile });
 try {
   const page = context.pages()[0] || (await context.newPage());
   page.setDefaultTimeout(15_000);

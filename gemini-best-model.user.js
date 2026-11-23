@@ -2,7 +2,7 @@
 // @name         Gemini: auto-select best model and thinking effort
 // @name:de      Gemini: bestes Modell und höchsten Denkaufwand automatisch wählen
 // @namespace    gemini-model-selector
-// @version      1.0.4
+// @version      1.0.5
 // @description  Gemini web app: selects the best model available to you (the lowest unlocked entry of the model picker) and the highest available thinking effort. Entries with a lock icon are hidden from the picker menu.
 // @description:de  Gemini-Web-App: wählt das beste verfügbare Modell (den untersten freigeschalteten Eintrag der Modellauswahl) und den höchsten verfügbaren Denkaufwand. Einträge mit Schloss-Symbol werden im Auswahlmenü ausgeblendet.
 // @match        https://gemini.google.com/app*
@@ -65,6 +65,10 @@
  *
  * Console output: one line when the script is loaded (so it is clear that it runs at all). Everything else is
  * debug output: localStorage.setItem('gemini-best-model-debug', '1'), then reload the page.
+ *
+ * Debug panel for devices without a console (a phone): open the page with ?gbm-debug appended to the address (as a
+ * new page, so that it loads afresh). The script then shows its log in a panel at the bottom of the page, with a
+ * button that copies it. The setting is kept until ?gbm-debug=off or the panel's "Turn off" button.
  */
 (function () {
   'use strict';
@@ -76,8 +80,21 @@
   const MESSAGES = {
     en: {
       active: 'active',
-      loaded: (version, mode, debug) =>
-        `${version} loaded (${mode})${debug ? ', debug log on' : ", debug log off: localStorage.setItem('gemini-best-model-debug', '1') and reload"}`,
+      loaded: (version, mode, debugMode) =>
+        `${version} loaded (${mode})` +
+        (debugMode === 'panel'
+          ? ', debug log and panel on'
+          : debugMode
+            ? ', debug log on'
+            : ", debug log off: open the page with ?gbm-debug in the address for a log panel, or localStorage.setItem('gemini-best-model-debug', '1') for the console, then reload"),
+      environment: (text) => `environment: ${text}`,
+      pickerFound: (label) => `model picker found: "${label}"`,
+      pickerMissing: (count, state) => `no usable model picker after 10 s: ${count} <bard-mode-switcher> element(s), button ${state}`,
+      panelCopy: 'Copy log',
+      panelCopied: 'Copied',
+      panelCopyFailed: 'Copy failed: select the text by hand',
+      panelOff: 'Turn off',
+      panelClose: 'Close',
       userSelection: 'user selection detected, automation paused until the page is reloaded',
       menuState: (list) => `menu: ${list}`,
       domOutline: (text) => `DOM outline (for a bug report):\n${text}`,
@@ -98,8 +115,21 @@
     },
     de: {
       active: 'aktiv',
-      loaded: (version, mode, debug) =>
-        `${version} geladen (${mode})${debug ? ', Debug-Log an' : ", Debug-Log aus: localStorage.setItem('gemini-best-model-debug', '1') und neu laden"}`,
+      loaded: (version, mode, debugMode) =>
+        `${version} geladen (${mode})` +
+        (debugMode === 'panel'
+          ? ', Debug-Log und Anzeige an'
+          : debugMode
+            ? ', Debug-Log an'
+            : ", Debug-Log aus: Seite mit ?gbm-debug in der Adresse öffnen für eine Log-Anzeige, oder localStorage.setItem('gemini-best-model-debug', '1') für die Konsole, dann neu laden"),
+      environment: (text) => `Umgebung: ${text}`,
+      pickerFound: (label) => `Modellauswahl gefunden: "${label}"`,
+      pickerMissing: (count, state) => `Nach 10 s keine nutzbare Modellauswahl: ${count} <bard-mode-switcher>-Element(e), Schaltfläche ${state}`,
+      panelCopy: 'Log kopieren',
+      panelCopied: 'Kopiert',
+      panelCopyFailed: 'Kopieren fehlgeschlagen: Text von Hand markieren',
+      panelOff: 'Ausschalten',
+      panelClose: 'Schließen',
       userSelection: 'Nutzerauswahl erkannt, Automatik pausiert bis zum Neuladen der Seite',
       menuState: (list) => `Menü: ${list}`,
       domOutline: (text) => `DOM-Auszug (für eine Fehlermeldung):\n${text}`,
@@ -144,13 +174,129 @@
     loopPauseMs: 120000, // ... so the script pauses for this long
   };
 
-  let DEBUG = false;
+  // ---------- Debug: console and on-screen panel ----------
+
+  // The setting 'gemini-best-model-debug' is '1' (log lines in the console) or 'panel' (also a panel on the page, for a
+  // phone, which has no console to type a command into). ?gbm-debug in the address sets 'panel', ?gbm-debug=off clears it.
+  const DEBUG_KEY = 'gemini-best-model-debug';
+  // The value may be missing or empty: a server that rewrites the address turns ?gbm-debug into ?gbm-debug= (seen on google.com).
+  const urlSwitch = /[?&#]gbm-debug(?:=([^&#]*))?(?=[&#]|$)/.exec(location.search + location.hash);
+  const urlOff = Boolean(urlSwitch) && /^(off|0|false|no)$/i.test(urlSwitch[1] || '');
+  let debugMode = '';
   try {
-    DEBUG = localStorage.getItem('gemini-best-model-debug') === '1';
+    if (urlSwitch && urlOff) localStorage.removeItem(DEBUG_KEY);
+    else if (urlSwitch) localStorage.setItem(DEBUG_KEY, 'panel');
+    debugMode = localStorage.getItem(DEBUG_KEY) || '';
   } catch (_) {
-    /* storage blocked: continue without debug output */
+    debugMode = urlSwitch && !urlOff ? 'panel' : ''; // storage blocked: the address alone switches it on for this page
   }
-  const log = (...args) => DEBUG && console.log('[gemini-best-model]', ...args);
+  const DEBUG = debugMode === '1' || debugMode === 'panel';
+  const PANEL = debugMode === 'panel';
+
+  const PANEL_ATTR = 'data-gemini-best-model-panel';
+  const HISTORY_MAX = 400; // log entries kept for the panel
+  const HISTORY_SHOWN = 80; // of which the panel shows the latest
+  const history = [];
+  let panel = null;
+  let panelLog = null;
+  let panelClosed = false;
+
+  // Inline styles through the CSSOM: no page policy can block them (the panel must also work where an inline <style> would not).
+  const styled = (el, styles) => {
+    for (const [name, value] of Object.entries(styles)) el.style.setProperty(name, value, 'important');
+    return el;
+  };
+
+  function panelButton(label, onClick) {
+    const button = styled(document.createElement('button'), { 'min-height': '36px', padding: '0 12px', font: '13px sans-serif', color: '#000', background: '#ddd', border: '0', 'border-radius': '4px' });
+    button.type = 'button';
+    button.textContent = label;
+    button.addEventListener('click', onClick);
+    return button;
+  }
+
+  async function copyHistory(button) {
+    const text = history.join('\n');
+    let done = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      done = true;
+    } catch (_) {
+      try {
+        const area = styled(document.createElement('textarea'), { position: 'fixed', opacity: '0' });
+        area.value = text;
+        panel.appendChild(area);
+        area.select();
+        done = document.execCommand('copy');
+        area.remove();
+      } catch (_) {
+        /* the text in the panel can still be selected by hand */
+      }
+    }
+    button.textContent = done ? t.panelCopied : t.panelCopyFailed;
+    setTimeout(() => (button.textContent = t.panelCopy), 2500);
+  }
+
+  function createPanel() {
+    panel = styled(document.createElement('div'), {
+      position: 'fixed', left: '0', right: '0', bottom: '0', 'z-index': '2147483647', display: 'flex', 'flex-direction': 'column',
+      'max-height': '40vh', background: 'rgba(24, 24, 24, 0.94)', color: '#ececec', font: '12px/1.35 monospace', 'box-sizing': 'border-box',
+    });
+    panel.setAttribute(PANEL_ATTR, '');
+    const bar = styled(document.createElement('div'), { display: 'flex', gap: '8px', 'align-items': 'center', padding: '4px 8px', background: '#000' });
+    const copy = panelButton(t.panelCopy, () => copyHistory(copy));
+    const off = panelButton(t.panelOff, () => {
+      try {
+        localStorage.removeItem(DEBUG_KEY);
+      } catch (_) {
+        /* storage blocked */
+      }
+      panelClosed = true;
+      panel.remove();
+    });
+    const close = panelButton(t.panelClose, () => {
+      panelClosed = true;
+      panel.remove();
+    });
+    const title = styled(document.createElement('span'), { flex: '1', 'min-width': '0', overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' });
+    title.textContent = 'gemini-best-model';
+    bar.append(title, copy, off, close);
+    panelLog = styled(document.createElement('div'), {
+      flex: '1', 'min-height': '0', overflow: 'auto', 'white-space': 'pre-wrap', 'word-break': 'break-word', padding: '4px 8px',
+      'user-select': 'text', '-webkit-user-select': 'text', 'overscroll-behavior': 'contain',
+    });
+    panel.append(bar, panelLog);
+  }
+
+  function renderPanel() {
+    if (!panelLog || !panel.isConnected) return;
+    panelLog.textContent = history.slice(-HISTORY_SHOWN).join('\n');
+    panelLog.scrollTop = panelLog.scrollHeight;
+  }
+
+  /** Puts the panel into the page as soon as <body> exists (the script may start before it does). */
+  function mountPanel() {
+    if (!PANEL || panelClosed) return;
+    if (!panel) createPanel();
+    if (!panel.isConnected && document.body) {
+      document.documentElement.appendChild(panel);
+      renderPanel();
+    }
+  }
+
+  function record(text) {
+    if (!PANEL) return;
+    history.push(`${new Date().toLocaleTimeString()} ${text}`);
+    if (history.length > HISTORY_MAX) history.shift();
+    mountPanel();
+    renderPanel();
+  }
+
+  const log = (...args) => {
+    if (!DEBUG) return;
+    console.log('[gemini-best-model]', ...args);
+    record(args.join(' '));
+  };
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const BUSY_ATTR = 'data-gemini-best-model-busy';
@@ -567,6 +713,10 @@ html[${BUSY_ATTR}] [popover]:has([${MENU_ATTR}]) {
     const result = { changed: false, models: models.length, hasEffort: Boolean(trigger), model: itemLabel(best), effort: '', sig: '' };
     if (!trigger) {
       log(t.noEffortMenu);
+      if (DEBUG && !noEffortOutlined) {
+        noEffortOutlined = true; // once per page load: a model without an effort entry is looked at again and again
+        log(t.domOutline(sketch(menu, 150, true)));
+      }
       result.sig = signature(findPicker() || picker);
       await closeMenus();
       return result;
@@ -613,6 +763,7 @@ html[${BUSY_ATTR}] [popover]:has([${MENU_ATTR}]) {
   }
 
   let busy = false;
+  let noEffortOutlined = false; // the debug log carries an outline of a menu without a thinking-effort entry once
   let clicks = 0; // entries clicked during the current attempt (feeds the loop guard)
   let failures = 0; // failed attempts in a row; reset when the picker label or the chat changes
   let thinRuns = 0; // looks at a menu with a single model in a row
@@ -673,7 +824,10 @@ html[${BUSY_ATTR}] [popover]:has([${MENU_ATTR}]) {
     if (busy) return;
     const picker = findPicker();
     if (!picker || !pickerReady(picker)) return;
-    if (!firstSeenAt) firstSeenAt = Date.now();
+    if (!firstSeenAt) {
+      firstSeenAt = Date.now();
+      log(t.pickerFound(pickerLabel(picker)));
+    }
 
     const sig = signature(picker);
     if (sig !== lastSig) {
@@ -747,11 +901,33 @@ html[${BUSY_ATTR}] [popover]:has([${MENU_ATTR}]) {
     }
   }
 
+  /** What the log should know about the device and the userscript manager (a phone has no console to ask). */
+  function describeEnvironment() {
+    const manager = typeof GM_info === 'object' && GM_info ? [GM_info.scriptHandler, GM_info.version].filter(Boolean).join(' ') : '';
+    let hasSelector = '?';
+    try {
+      hasSelector = CSS.supports('selector(:has(*))');
+    } catch (_) {
+      /* CSS.supports missing */
+    }
+    return [
+      navigator.userAgent,
+      `window ${window.innerWidth}x${window.innerHeight} @${window.devicePixelRatio}`,
+      `touch points ${navigator.maxTouchPoints}`,
+      `userscript manager ${manager || 'none'}`,
+      `:has() ${hasSelector}`,
+      NEW_CHAT_PATH.test(location.pathname) ? 'new chat' : 'chat',
+      `document ${document.readyState}`,
+    ].join(' | ');
+  }
+
   function start() {
     installStyles();
     document.addEventListener('pointerdown', onUserInput, true);
     document.addEventListener('keydown', onUserInput, true);
-    new MutationObserver(() => {
+    new MutationObserver((records) => {
+      if (panel && records.every((record) => panel.contains(record.target))) return; // the log panel's own changes
+      mountPanel();
       markPickerMenus();
       hideLockedEntries();
       if (busyNow) styleBusyPopovers();
@@ -765,11 +941,22 @@ html[${BUSY_ATTR}] [popover]:has([${MENU_ATTR}]) {
     });
     document.addEventListener('visibilitychange', schedule);
     schedule();
-    log(t.active);
     // The one line that is always printed: it shows that the script runs at all, and in which mode.
     const version = typeof GM_info === 'object' && GM_info && GM_info.script ? GM_info.script.version : '';
     const mode = typeof GM_addStyle === 'function' ? 'userscript sandbox' : 'page context';
-    console.info('[gemini-best-model]', t.loaded(version || 'script', mode, DEBUG));
+    const loaded = t.loaded(version || 'script', mode, debugMode);
+    console.info('[gemini-best-model]', loaded);
+    record(loaded);
+    log(t.active);
+    if (DEBUG) {
+      log(t.environment(describeEnvironment()));
+      setTimeout(() => {
+        if (firstSeenAt) return;
+        const picker = findPicker();
+        const state = picker ? `found, label "${pickerLabel(picker)}", aria-disabled ${picker.getAttribute('aria-disabled')}` : 'not found';
+        log(t.pickerMissing(document.querySelectorAll('bard-mode-switcher').length, state));
+      }, 10000);
+    }
   }
 
   // With @run-at document-start <html> may not exist yet: wait for it.

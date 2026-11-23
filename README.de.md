@@ -35,8 +35,10 @@ untersten freigeschalteten Eintrag der Modellauswahl) und den **höchsten verfü
   Optionen zeigt: im breiten Fenster öffnen sie sich in einem Flyout neben dem Menü (per Hover), im schmalen Fenster
   (gesehen bei 640 px und 870 px) klappt der Eintrag an Ort und Stelle wie ein Akkordeon auf (per Klick), und seine
   Optionen stehen im Eintrag. Das Skript liest beides; im schmalen Layout probiert es zuerst den Hover, jeder Blick
-  dauert dort etwa eine Sekunde länger. Ein Layout in Handybreite (Menü als Bottom Sheet) ist nicht gemessen und nicht
-  unterstützt.
+  dauert dort etwa eine Sekunde länger. Ein Handy (gemessen bei 360 px mit der mobilen Seite, abgemeldet) nutzt das
+  Layout der Kopfzeile: dieselbe Menüliste in einem Popover, kein Bottom Sheet. Ein Screenshot von Firefox auf Android
+  (angemeldet) zeigt dort die Akkordeon-Form von „Denkaufwand“. Was bekannt ist und was nicht, steht unter „Handy“ in der
+  Fehlersuche.
 - **Zwei Ansichten der Auswahl:** Neben der Menüliste kann die Auswahl „The Periodic Table of Gemini“ zeigen (ein Panel
   mit den Umschaltern „Full table“ und „List view“ und einer Kachel je Modell). Das Skript arbeitet auf der Liste:
   erscheint das Panel, drückt es „List view“ (exakter Treffer der ganzen Beschriftung; sonst wird im Panel nie etwas
@@ -68,6 +70,14 @@ untersten freigeschalteten Eintrag der Modellauswahl) und den **höchsten verfü
   Skript nicht zurecht (kein Untermenü, kein wählbarer Eintrag), enthält das Log zusätzlich einen kompakten Auszug von
   Auswahl und Menüs; für eine Fehlermeldung genügen dann die Zeilen mit `[gemini-best-model]`. Menübeschriftungen werden
   geloggt, Chat-Inhalte nie.
+- **Log-Anzeige (für ein Handy, das keine Konsole hat):** `https://gemini.google.com/app?gbm-debug` in einem **neuen Tab**
+  öffnen (das Skript liest die Adresse beim Laden der Seite; ein Server macht aus `?gbm-debug` mitunter `?gbm-debug=`,
+  beides funktioniert). Das Skript zeigt dann sein Log in einem Panel am unteren Rand der Seite: die Zeile „geladen“, die
+  Umgebung (User-Agent, Fenstergröße, Touch, Userscript-Manager, ob der Browser `:has()` kennt), ob die Auswahl gefunden
+  wurde, jedes Menü, das es sieht, und was es geklickt hat. „Log kopieren“ kopiert den Text (oder von Hand markieren),
+  „Ausschalten“ entfernt die Einstellung, „Schließen“ blendet das Panel bis zum nächsten Laden aus. Auch `?gbm-debug=off`
+  schaltet es aus. Die Einstellung bleibt bis dahin bestehen. Das Log enthält Menübeschriftungen und technische Angaben
+  zum Gerät, keine Chat-Inhalte.
 
 ## Fehlersuche
 
@@ -75,6 +85,12 @@ untersten freigeschalteten Eintrag der Modellauswahl) und den **höchsten verfü
   Skript gibt sie einmal je Seitenladung aus, ohne jeden Schalter. Fehlt sie, läuft das Skript auf der Seite nicht
   (Tampermonkey-Symbol: ist das Skript für den Tab aufgeführt und aktiv?). Ist sie da, das Debug-Flag setzen (siehe
   Debug), neu laden und das Log lesen: Es nennt den Schritt, der scheitert.
+- **Handy (Firefox auf Android), keine Konsole:** Zuerst im Menü des Userscript-Managers bei geöffnetem Gemini-Tab
+  prüfen, dass dieses Skript für die Seite aufgeführt und aktiviert ist und welche Version es hat (die Log-Anzeige
+  braucht 1.0.5 oder neuer). Dann die Seite mit `?gbm-debug` öffnen, wie unter Debug beschrieben. **Gar kein Panel:** Das
+  Skript läuft auf der Seite nicht: Manager, Match-Muster oder Version, nicht die Auswahl. **Panel da:** lesen; die ersten
+  Zeilen sagen, ob die Auswahl gefunden wurde, und nach etwa 10 s nennt „Nach 10 s keine nutzbare Modellauswahl“, was
+  das Skript stattdessen sieht. Das Log in eine Fehlermeldung kopieren.
 - **`@grant GM_addStyle` statt `@grant none`:** Bei `none` schleust der Userscript-Manager das Skript als Inline-`<script>`
   in die Seite ein, und die strenge Content-Security-Policy von Gemini blockt das in Firefox (Datenschutz-Erweiterungen
   verschärfen das). Mit einem Grant führt der Manager das Skript in seiner eigenen Sandbox aus, die keine Seitenrichtlinie
@@ -108,6 +124,16 @@ danach „Neon Hoch“. **Ausblenden bestätigt:** Auf einem Screenshot des geö
 Fenster, 640 px) fehlt der gesperrte Eintrag „Code und komplexe Aufgaben“; das Menü zeigt Automatic, „Hilfe im Alltag“
 und „Detaillierte Analyse“ sowie „Denkaufwand“ mit „Hoch“ angehakt.
 
+**Handy:** Die Auswahl und ihr Menü bei 360 px Breite mit dem User-Agent von Firefox auf Android wurden auf der echten
+Seite gemessen, abgemeldet (Chromium mit Touch und Pixeldichte 3 als Ersatz): Die Auswahl sitzt in der Kopfzeile, das
+Menü ist dasselbe `gem-menu`-Popover in `bard-mode-switcher`, und das Skript läuft dort im E2E-Test durch (Auswahl
+gefunden, Menü gelesen, gesperrte Einträge ausgeblendet, nichts geklickt, Menü wieder geschlossen). **Offenes Problem:**
+Ein Nutzerbericht mit echtem Firefox auf Android (angemeldet, Skript 1.0.4) zeigt den Denkaufwand weiter auf „Niedrig“
+und den gesperrten Eintrag „Code und komplexe Aufgaben“ weiter sichtbar. Das Ausblenden übernimmt das Stylesheet, sobald
+das Skript läuft; das Skript lief auf dieser Seite also sehr wahrscheinlich gar nicht, aber das ist nicht belegt.
+Version 1.0.5 bringt die Log-Anzeige, um das herauszufinden (siehe Debug). **Firefox auf Android selbst deckt kein Test
+ab.**
+
 ## Code und Lokalisierung
 
 Der Code des Skripts (Bezeichner, Kommentare) ist englisch. Texte gibt es auf Englisch und Deutsch:
@@ -124,14 +150,16 @@ Der Code des Skripts (Bezeichner, Kommentare) ist englisch. Texte gibt es auf En
 npm install
 npm test            # Menü-Test (Mock-Seite) und E2E-Test (echte Seite)
 npm run test:menu   # nur Mock-Seite: Regeln, Ausblenden, Fokus, neuer Chat, eigene Wahl, Tippen, Schleifenbremse, Wiederholung
-npm run test:e2e    # echte Seite: abgemeldet (Wegwerfprofil, breites und schmales Fenster) und, falls vorhanden, angemeldet
+npm run test:e2e    # echte Seite: abgemeldet (Wegwerfprofil; breites, schmales und Handy-Fenster; Log-Anzeige) und, falls vorhanden, angemeldet
 node tools/probe.mjs --viewport=870x600   # Auswahl und Menüs der echten Seite ausgeben (beliebige Fenstergröße)
+node tools/probe.mjs --mobile             # dasselbe als Handy: 360x780, Touch, User-Agent von Firefox auf Android
 npm run login       # einmalig: öffnet ein Browserfenster zur Google-Anmeldung und sichert die Sitzung für den E2E-Test
 ```
 
 Der Menü-Test braucht kein Konto. Seine Mock-Seite bildet das Markup der Auswahl nach, wie es auf der echten Seite
 gemessen wurde, samt Denkaufwand-Untermenü und dem Verhalten, von dem das Skript abhängt (Popover in der obersten Ebene,
-Fokus wandert ins Menü und zurück, Escape schließt eine Ebene, ein deaktivierter Eintrag verschluckt den Klick).
+Fokus wandert ins Menü und zurück, Escape schließt eine Ebene, ein deaktivierter Eintrag verschluckt den Klick). Er lässt
+die Seite auch als Handy laufen (Touch, 360 px, User-Agent von Firefox auf Android) und deckt die Log-Anzeige ab.
 `ONLY=<Regex>` führt einzelne Szenarien aus, `VERBOSE=1` zeigt Zustand und Skript-Log auch für bestandene Prüfungen.
 
 Der E2E-Test lädt das Skript als Init-Script (Tampermonkey selbst läuft im Test nicht; das Skript nutzt keine

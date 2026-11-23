@@ -32,21 +32,21 @@ const skip = (why) => console.log(`SKIP  ${why}`);
 // Under the input the mark sits on the <button>, in the header (narrow window) on the <gem-button> around it.
 const PICKER = 'bard-mode-switcher [data-test-id="bard-mode-menu-button"]';
 
-/** Opens the app with the script loaded and returns the page and its console lines of the script. */
-async function openApp(context) {
+/** Opens the app with the script loaded and returns the page and its console lines of the script. flag: what the debug setting holds at the start (null: nothing). */
+async function openApp(context, { url = 'https://gemini.google.com/app', flag = '1' } = {}) {
   const page = context.pages()[0] || (await context.newPage());
   page.setDefaultTimeout(15_000);
   const lines = [];
   page.on('console', (m) => m.text().startsWith('[gemini-best-model]') && lines.push(m.text().replace('[gemini-best-model] ', '')));
-  await page.addInitScript(() => {
+  await page.addInitScript((value) => {
     try {
-      localStorage.setItem('gemini-best-model-debug', '1');
+      if (value) localStorage.setItem('gemini-best-model-debug', value);
     } catch (_) {}
-  });
+  }, flag);
   await page.addInitScript({ content: src });
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      await page.goto('https://gemini.google.com/app', { waitUntil: 'domcontentloaded', timeout: 40_000 });
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 40_000 });
       break;
     } catch (error) {
       if (attempt === 2) throw error;
@@ -67,9 +67,9 @@ const menuState = (page) =>
     };
   });
 
-/** Opens the menu with a real click and lists the entries the user sees: label, lock icon, computed display. */
-async function userMenu(page) {
-  await page.click(PICKER);
+/** Opens the menu with a real click (a tap on a phone) and lists the entries the user sees: label, lock icon, computed display. */
+async function userMenu(page, { mobile = false } = {}) {
+  await (mobile ? page.tap(PICKER) : page.click(PICKER));
   await page.waitForTimeout(800);
   const entries = await page.evaluate(() =>
     [...document.querySelectorAll('bard-mode-switcher gem-menu[role="menu"] > [role^="menuitem"]')].map((el) => ({
@@ -84,12 +84,13 @@ async function userMenu(page) {
   return entries;
 }
 
-// ---------- 1. signed out, in a wide and in a narrow window (the picker moves into the header) ----------
-for (const { label, viewport } of [
+// ---------- 1. signed out, in a wide window, in a narrow one (the picker moves into the header) and on a phone ----------
+for (const { label, viewport, mobile } of [
   { label: 'wide window', viewport: { width: 1400, height: 900 } },
   { label: 'narrow window 870x600', viewport: { width: 870, height: 600 } },
+  { label: 'phone 360x780 (touch, mobile page)', viewport: { width: 360, height: 780 }, mobile: true },
 ]) {
-  const { context, close } = await launchAnonymous({ viewport });
+  const { context, close } = await launchAnonymous({ viewport, mobile });
   try {
     const { page, lines } = await openApp(context);
     const found = await page.waitForSelector(PICKER, { timeout: 30_000 }).catch(() => null);
@@ -101,7 +102,7 @@ for (const { label, viewport } of [
       check(`signed out, ${label}: the script did its work and closed the menu again`, state.menusVisible === 0, JSON.stringify(state));
       check(`signed out, ${label}: nothing was clicked (still on the app page, picker still says Automatic)`, state.url === 'https://gemini.google.com/app' && /automatic|auto/i.test(state.label || ''), JSON.stringify(state));
       check(`signed out, ${label}: the script saw the menu and reported no error`, lines.some((l) => /^(menu|Menü):/.test(l)) && !lines.some((l) => /failed|Fehlversuch/.test(l)), lines.join(' | '));
-      const entries = await userMenu(page);
+      const entries = await userMenu(page, { mobile });
       const slug = label.replace(/\W+/g, '-');
       fs.writeFileSync(path.join(outDir, `e2e-signed-out-menu-${slug}.json`), JSON.stringify(entries, null, 2));
       const lockedShown = entries.filter((e) => e.locked && e.display !== 'none');
@@ -109,6 +110,40 @@ for (const { label, viewport } of [
       check(`signed out, ${label}: every model with a lock icon is hidden`, lockedCount >= 1 && lockedShown.length === 0, JSON.stringify(entries));
       check(`signed out, ${label}: Automatic and the sign-in entry stay visible`, entries.filter((e) => !e.locked && e.display !== 'none').length >= 2, JSON.stringify(entries));
       await page.screenshot({ path: path.join(outDir, `e2e-signed-out-${slug}.png`) });
+    }
+  } finally {
+    await close();
+  }
+}
+
+// ---------- 1b. the on-screen log for a phone, on the real page: ?gbm-debug in the address ----------
+{
+  const { context, close } = await launchAnonymous({ viewport: { width: 360, height: 780 }, mobile: true });
+  try {
+    const { page, lines } = await openApp(context, { url: 'https://gemini.google.com/app?gbm-debug', flag: null });
+    const found = await page.waitForSelector(PICKER, { timeout: 30_000 }).catch(() => null);
+    if (!found) {
+      skip('phone with ?gbm-debug: the model picker did not show up (no network or a changed page), part skipped');
+    } else {
+      await page.waitForTimeout(9000);
+      const panel = await page.evaluate(() => {
+        const el = document.querySelector('[data-gemini-best-model-panel]');
+        const rect = el?.getBoundingClientRect();
+        return {
+          count: document.querySelectorAll('[data-gemini-best-model-panel]').length,
+          width: rect?.width,
+          bottom: rect?.bottom,
+          innerWidth: window.innerWidth,
+          innerHeight: window.innerHeight,
+          flag: localStorage.getItem('gemini-best-model-debug'),
+          text: el ? [...el.querySelectorAll('div')].at(-1).textContent : '',
+        };
+      });
+      fs.writeFileSync(path.join(outDir, 'e2e-phone-panel.txt'), panel.text);
+      await page.screenshot({ path: path.join(outDir, 'e2e-phone-panel.png') });
+      check('phone, ?gbm-debug: one log panel, full width at the bottom edge, the setting is stored', panel.count === 1 && Math.abs(panel.width - panel.innerWidth) < 2 && Math.abs(panel.bottom - panel.innerHeight) < 2 && panel.flag === 'panel', JSON.stringify({ ...panel, text: undefined }));
+      // the test browser runs in German: the messages are German
+      check('phone, ?gbm-debug: the panel shows the environment (Android, touch), the picker and the menu the script saw', /(environment|Umgebung): .*Android.*touch points [1-9]/.test(panel.text) && /(model picker found|Modellauswahl gefunden)/.test(panel.text) && / (menu|Menü): /.test(panel.text), `${panel.text.slice(0, 800)} || console: ${lines.join(' | ').slice(0, 600)}`);
     }
   } finally {
     await close();

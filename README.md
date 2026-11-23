@@ -33,8 +33,9 @@ UI). Menu entries with a **lock icon** are hidden.
   layouts also differ in how "Denkaufwand" shows its options: in a wide window they open in a flyout next to the menu
   (on hover), in a narrow window (seen at 640 px and 870 px) the entry expands in place like an accordion (on a
   click) and its options sit inside the entry. The script reads both; in the narrow layout it tries hover first, so
-  each look costs about a second more. A phone-width layout (the menu as a bottom sheet) has not been measured and is
-  not supported.
+  each look costs about a second more. A phone (measured at 360 px with the mobile page, signed out) uses the header
+  layout: the same list menu in a popover, not a bottom sheet. A screenshot of Firefox on Android (signed in) shows
+  the accordion form of "Denkaufwand" there. See "Phone" under Troubleshooting for what is and is not known.
 - **Two views of the picker:** Besides the list menu, the picker can show "The Periodic Table of Gemini" (a panel with
   the switches "Full table" and "List view" and a tile per model). The script works on the list: if the panel appears,
   it presses "List view" (an exact match of the whole label; nothing else in the panel is ever clicked, no tile, no
@@ -64,6 +65,13 @@ UI). Menu entries with a **lock icon** are hidden.
   every menu the script sees (`*` checked, `>` opens a submenu, `[lock]`, `[disabled]`). If the script cannot find its
   way (no submenu, no selectable entry), the log also carries a compact outline of the picker and its menus, so a bug
   report needs nothing but the lines starting with `[gemini-best-model]`. Menu labels are logged, chat content never.
+- **Log panel (for a phone, which has no console):** Open `https://gemini.google.com/app?gbm-debug` in a **new tab**
+  (the script reads the address when the page loads; a server may turn `?gbm-debug` into `?gbm-debug=`, both work).
+  The script then shows its log in a panel at the bottom edge of the page: the loaded line, the environment (user
+  agent, window size, touch, userscript manager, whether the browser knows `:has()`), whether the picker was found,
+  every menu it sees and what it clicked. "Copy log" copies the text (or select it by hand), "Turn off" removes the
+  setting, "Close" hides the panel until the next load. `?gbm-debug=off` switches it off as well. The setting stays
+  until then. The log carries menu labels and technical details of the device, no chat content.
 
 ## Troubleshooting
 
@@ -71,6 +79,12 @@ UI). Menu entries with a **lock icon** are hidden.
   script prints it once per page load, without any switch. If it is missing, the script does not run on the page
   (Tampermonkey icon: is the script listed and enabled for the tab?). If it is there, set the debug flag (see Debug),
   reload and read the log: it names the step that failed.
+- **Phone (Firefox on Android), no console:** First check in the userscript manager's menu, with the Gemini tab open,
+  that this script is listed for the page, enabled, and which version it is (the log panel needs 1.0.5 or newer).
+  Then open the page with `?gbm-debug` as described under Debug. **No panel at all:** the script does not run on the
+  page: manager, match pattern or version, not the picker. **Panel there:** read it; the first lines say whether the
+  picker was found, and after about 10 s "no usable model picker" names what the script sees instead. Copy the log
+  into a bug report.
 - **`@grant GM_addStyle`, not `@grant none`:** With `none` a userscript manager injects the script into the page as an
   inline `<script>`, which the strict Content-Security-Policy of Gemini blocks in Firefox (privacy extensions make this
   worse). With a grant the manager runs the script in its own sandbox, which no page policy can block. The script needs
@@ -101,6 +115,15 @@ chose "Hoch", and its verification pass found model and effort as wanted. The pi
 entry "Code und komplexe Aufgaben"; the menu shows Automatic, "Hilfe im Alltag" and "Detaillierte Analyse" and
 "Denkaufwand" with "Hoch" ticked.
 
+**Phone:** The picker and its menu at 360 px width with the user agent of Firefox on Android were measured on the real
+page, signed out (Chromium with touch and device pixel ratio 3 as the stand-in): the picker sits in the header, the
+menu is the same `gem-menu` popover inside `bard-mode-switcher`, and the script runs through there in the E2E test
+(picker found, menu read, locked entries hidden, nothing clicked, menu closed again). **Open problem:** a user report
+with real Firefox on Android (signed in, script 1.0.4) shows the thinking effort still at "Niedrig" and the locked
+entry "Code und komplexe Aufgaben" still visible. Hiding is done by the stylesheet whenever the script runs, so the
+script most likely did not run on that page at all, but that is not established. Version 1.0.5 adds the log panel to
+find out (see Debug). **Firefox on Android itself is not covered by any test.**
+
 ## Code and localization
 
 The script's code (identifiers, comments) is English. Texts exist in English and German:
@@ -117,15 +140,17 @@ The script's code (identifiers, comments) is English. Texts exist in English and
 npm install
 npm test            # menu test (mock page) and E2E test (real page)
 npm run test:menu   # mock page only: rules, hiding, focus, new chat, own choice, typing, loop guard, retry
-npm run test:e2e    # real page: signed out (throw-away profile, wide and narrow window) and, if available, signed in
+npm run test:e2e    # real page: signed out (throw-away profile; wide, narrow and phone window; log panel) and, if available, signed in
 node tools/probe.mjs --viewport=870x600   # dump the picker and its menus of the real page (any window size)
+node tools/probe.mjs --mobile             # the same as a phone: 360x780, touch, user agent of Firefox on Android
 npm run login       # one-off: opens a browser window to sign in to Google, saves the session for the E2E test
 ```
 
 The menu test needs no account. Its mock page reproduces the markup of the picker as measured on the real page and a
 thinking-effort submenu, including the behavior the script depends on (top-layer popover, focus moves into the menu
-and back, Escape closes one level, a disabled entry swallows the click). `ONLY=<regex>` runs single scenarios,
-`VERBOSE=1` prints state and script log for passed checks.
+and back, Escape closes one level, a disabled entry swallows the click). It also runs the page as a phone (touch, 360
+px, user agent of Firefox on Android) and covers the log panel. `ONLY=<regex>` runs single scenarios, `VERBOSE=1`
+prints state and script log for passed checks.
 
 The E2E test loads the script as an init script (Tampermonkey itself does not run in the test; the script uses no
 `GM_*` API). Signed out it runs in a throw-away profile. The signed-in part runs if `npm run login` has created the

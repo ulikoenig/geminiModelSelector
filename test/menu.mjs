@@ -23,6 +23,8 @@
 //                            around the <button>, and the <button> has no aria-haspopup / aria-expanded
 //   view=table               the picker opens "The Periodic Table of Gemini" (a panel, no role="menu") until the page's
 //                            "List view" switch is pressed; nolist=1 leaves that switch out
+//   gbm-debug, gbm-debug=off not a mock parameter but the script's own switch for its on-screen log panel (see the
+//                            "panel" scenarios); a scenario's debugFlag sets what the debug setting holds at the start
 // ONLY=<regex> runs only the scenarios whose name matches; VERBOSE=1 prints state and script log for passed checks.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -337,7 +339,7 @@ function mockMain() {
 
 const mockPage = (url) => {
   const q = Object.fromEntries(new URL(url).searchParams);
-  return `<!doctype html><html lang="de"><meta charset="utf-8"><title>mock</title>
+  return `<!doctype html><html lang="de"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>mock</title>
 <style>
   body { font: 14px sans-serif; }
   bard-mode-switcher, gem-popover, gem-menu, gem-menu-item, gem-icon, mat-icon, .leading-container { display: block; }
@@ -426,8 +428,19 @@ const gmAddStyleStub = () => {
  * of the page (own globals, shared DOM, like a content script), not into the page's own world. initIsolated runs in
  * that world before the script (e.g. the GM_addStyle stub); init runs in the page's world as usual.
  */
-async function run({ name, query = '', path: urlPath = '/app', waitMs = WAIT_MS, locale = 'en-US', init, initIsolated, world, act }) {
-  const ctx = await browser.newContext({ locale });
+// A phone as the real page sees it: touch, a 360 px wide screen at three device pixels per CSS pixel, the user agent of
+// Firefox on Android (the engine stays Chromium: this reproduces the layout and the touch input, not Firefox).
+const PHONE = {
+  viewport: { width: 360, height: 780 },
+  deviceScaleFactor: 3,
+  isMobile: true,
+  hasTouch: true,
+  userAgent: 'Mozilla/5.0 (Android 15; Mobile; rv:142.0) Gecko/142.0 Firefox/142.0',
+};
+
+/** debugFlag: what 'gemini-best-model-debug' holds when the page starts ('1' console, 'panel' console and panel, null nothing). */
+async function run({ name, query = '', path: urlPath = '/app', waitMs = WAIT_MS, locale = 'en-US', init, initIsolated, world, act, phone = false, debugFlag = '1' }) {
+  const ctx = await browser.newContext({ locale, ...(phone ? PHONE : {}) });
   await ctx.route('https://gemini.google.com/**', (route) =>
     route.fulfill({ contentType: 'text/html; charset=utf-8', body: mockPage(route.request().url()) }),
   );
@@ -435,11 +448,11 @@ async function run({ name, query = '', path: urlPath = '/app', waitMs = WAIT_MS,
   const lines = [];
   page.on('console', (m) => m.text().startsWith('[gemini-best-model]') && lines.push(m.text().replace('[gemini-best-model] ', '')));
   page.on('pageerror', (e) => lines.push('PAGEERROR ' + e.message));
-  await page.addInitScript(() => {
+  await page.addInitScript((flag) => {
     try {
-      localStorage.setItem('gemini-best-model-debug', '1');
+      if (flag) localStorage.setItem('gemini-best-model-debug', flag);
     } catch (_) {}
-  });
+  }, debugFlag);
   if (init) await page.addInitScript(init);
   if (world === 'isolated') {
     const cdp = await ctx.newCDPSession(page);
@@ -471,6 +484,15 @@ async function run({ name, query = '', path: urlPath = '/app', waitMs = WAIT_MS,
     tableOpens: window.__tableOpens,
     panelClicks: window.__panelClicks,
     viewSwitches: window.__viewSwitches,
+    panels: document.querySelectorAll('[data-gemini-best-model-panel]').length, // the script's own log panel
+    flag: (() => {
+      try {
+        return localStorage.getItem('gemini-best-model-debug');
+      } catch (_) {
+        return 'blocked';
+      }
+    })(),
+    panelText: [...document.querySelectorAll('[data-gemini-best-model-panel] > div')].at(-1)?.textContent || '',
   }));
   await withTimeout(ctx.close());
   return { name, ...state, ...extra, lines };
@@ -491,6 +513,29 @@ const user = {
     await page.click('#picker');
     await page.waitForTimeout(500);
     return { before, entries: await entriesOf('gem-menu[data-test-id="gem-mode-menu"]')(page), userOpacity: await page.evaluate(() => window.__opacity.at(-1)) };
+  },
+  /** The same with a finger: a real touch tap (needs a context with touch, see PHONE). */
+  tapsMenu: async (page) => {
+    const before = await page.evaluate(() => ({ popovers: document.querySelectorAll('[popover]').length, active: document.activeElement?.id || document.activeElement?.tagName }));
+    await page.tap('#picker');
+    await page.waitForTimeout(500);
+    return { before, entries: await entriesOf('gem-menu[data-test-id="gem-mode-menu"]')(page), userOpacity: await page.evaluate(() => window.__opacity.at(-1)) };
+  },
+  /** Looks at the log panel: where it sits, then presses its first button ("Copy log") and reads the label afterwards. */
+  usesPanel: async (page) => {
+    const panel = page.locator('[data-gemini-best-model-panel]');
+    const box = await panel.boundingBox();
+    const viewport = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
+    const buttons = await panel.locator('button').allTextContents();
+    await panel.locator('button').first().tap().catch(() => panel.locator('button').first().click());
+    await page.waitForTimeout(400);
+    const afterCopy = await panel.locator('button').first().textContent();
+    return { box, viewport, buttons, afterCopy };
+  },
+  /** Presses the n-th button of the log panel (0 copy, 1 turn off, 2 close). */
+  pressesPanelButton: (n) => async (page) => {
+    await page.locator('[data-gemini-best-model-panel] button').nth(n).click();
+    await page.waitForTimeout(300);
   },
   /** Leaves the new-chat page for a conversation and comes back (the page notices a path change on its next look). */
   newChat: async (page) => {
@@ -538,6 +583,17 @@ const DEFS = [
   // --- narrow window: the picker moved into the header and is marked differently (real page, 870x600) ---
   { name: 'header layout (narrow window)', query: 'layout=header', act: user.opensMenu },
   { name: 'header layout: new chat resets the effort', query: 'layout=header&model=n&effort=high&newChatResetsEffort=1', waitMs: 3500, act: async (page) => { await user.newChat(page); await page.waitForTimeout(7000); } },
+  // --- a phone: touch, 360 px, header layout with the expandable effort entry (the real page at 360x780, mobile user agent) ---
+  { name: 'phone: touch, header layout, expandable entry', phone: true, query: 'layout=header&sub=inline', act: user.tapsMenu },
+  { name: 'phone: a tap on the picker counts as own choice', phone: true, query: 'layout=header&sub=inline&delay=2000&model=n&effort=high', waitMs: 1600, act: async (page) => { await page.tap('#picker'); await page.waitForTimeout(5000); } },
+  // --- the on-screen log for devices without a console: ?gbm-debug in the address switches it on ---
+  { name: 'panel: ?gbm-debug switches the log panel on', query: 'gbm-debug', debugFlag: null, act: user.usesPanel },
+  { name: 'panel: ?gbm-debug= (a server may rewrite the address like this) switches it on as well', query: 'gbm-debug=', debugFlag: null, waitMs: 2500 },
+  { name: 'panel on a phone', phone: true, query: 'gbm-debug&layout=header&sub=inline', debugFlag: null, act: user.usesPanel },
+  { name: 'panel in the userscript sandbox', world: 'isolated', initIsolated: gmAddStyleStub, query: 'gbm-debug', debugFlag: null, act: user.usesPanel },
+  { name: 'panel: ?gbm-debug=off switches it off', query: 'gbm-debug=off', debugFlag: 'panel' },
+  { name: 'panel: "Turn off" removes it and the setting', query: 'gbm-debug', debugFlag: null, waitMs: 2500, act: user.pressesPanelButton(1) },
+  { name: 'panel: "Close" removes it for this page only', query: 'gbm-debug', debugFlag: null, waitMs: 2500, act: user.pressesPanelButton(2) },
   // --- the picker shows the periodic table instead of the list menu ---
   { name: 'periodic table view: the script presses "List view"', query: 'view=table' },
   { name: 'periodic table view without a "List view" switch', query: 'view=table&nolist=1', waitMs: 9000 },
@@ -699,6 +755,7 @@ on('default', (c) => {
   check('default: three looks (model, effort, verification), everything closed afterwards', c.opens === 3 && c.popovers === 0 && noErrors(c), show(c));
   check('default: the always-printed line says the script is loaded, in page context', c.lines.some((l) => /loaded \(page context\)/.test(l)), show(c));
   check('default: every popover is invisible while the script works', c.opacity.length >= 4 && c.opacity.every((o) => o === '0'), JSON.stringify(c.opacity));
+  check('default: the console log (setting "1") shows no panel on the page', c.panels === 0 && c.flag === '1' && c.lines.some((l) => /^environment: /.test(l)) && c.lines.some((l) => /^model picker found: /.test(l)), show(c));
 });
 on('model already best', (c) => {
   check('model already best: only the effort is changed', eq(c.selected, ['effort:Hoch']) && c.opens === 2, show(c));
@@ -785,6 +842,46 @@ on('header layout (narrow window)', (c) => {
 });
 on('header layout: new chat resets the effort', (c) => {
   check('header layout: a new chat is looked at and the reset effort is set again', eq(c.selected, ['effort:Hoch']) && c.opens === 3 && c.effort === 'high', show(c));
+});
+on('phone: touch, header layout, expandable entry', (c) => {
+  const hidden = c.entries.filter((e) => e.display === 'none').map((e) => e.text);
+  const own = c.opacity.slice(0, -1); // the last popover is the one the user opened
+  check('phone: the picker is found, model and effort are chosen through the expandable entry', eq(c.selected, BEST) && c.effort === 'high' && noBadClicks(c) && noErrors(c), show(c));
+  // three looks, one popover each (the options sit inside the entry, there is no flyout), then the one the user opened
+  check('phone: everything is closed again, focus is back in the input, the popovers were invisible while the script worked', c.before.popovers === 0 && c.before.active === 'input' && own.length >= 3 && own.every((o) => o === '0'), JSON.stringify(c.before) + ' ' + JSON.stringify(c.opacity));
+  check('phone: after a tap on the picker the locked model is hidden and the menu is visible', eq(hidden, ['Code und komplexe Aufgaben']) && c.userOpacity === '1', JSON.stringify(c.entries));
+  check('phone: the log names the device (touch points, user agent of Firefox on Android)', c.lines.some((l) => /^environment: .*Android.*touch points [1-9]/.test(l)), show(c));
+});
+on('phone: a tap on the picker counts as own choice', (c) => {
+  check('phone: a real tap on the picker during the busy window counts as own choice', c.lines.some((l) => /user selection detected/.test(l)), show(c));
+});
+on('panel: ?gbm-debug switches the log panel on', (c) => {
+  check('panel: ?gbm-debug in the address stores the setting and shows exactly one panel', c.flag === 'panel' && c.panels === 1, `flag=${c.flag} panels=${c.panels}`);
+  check('panel: the panel holds the loaded line, the environment, the picker and what the script did', /loaded \(page context\), debug log and panel on/.test(c.panelText) && /environment: /.test(c.panelText) && /model picker found: /.test(c.panelText) && /model selected: Detaillierte Analyse/.test(c.panelText) && /thinking effort selected: Hoch/.test(c.panelText), c.panelText.slice(0, 600));
+  check('panel: it does not change what the script does (three looks, best model and effort, nothing left open)', eq(c.selected, BEST) && c.opens === 3 && c.popovers === 0 && noBadClicks(c) && noErrors(c), show(c));
+  check('panel: it sits at the bottom edge, full width, and shows three buttons (copy, turn off, close)', c.box && Math.abs(c.box.y + c.box.height - c.viewport.height) < 2 && Math.abs(c.box.width - c.viewport.width) < 2 && eq(c.buttons, ['Copy log', 'Turn off', 'Close']), JSON.stringify({ box: c.box, viewport: c.viewport, buttons: c.buttons }));
+  check('panel: the copy button answers (copied, or it says the copy failed)', c.afterCopy === 'Copied' || /^Copy failed/.test(c.afterCopy), String(c.afterCopy));
+  check('panel: the lines are in the console as well', c.lines.some((l) => /model selected: /.test(l)), show(c));
+});
+on('panel: ?gbm-debug= (a server may rewrite the address like this) switches it on as well', (c) => {
+  check('panel: ?gbm-debug= (empty value) switches the panel on too', c.flag === 'panel' && c.panels === 1, `flag=${c.flag} panels=${c.panels}`);
+});
+on('panel on a phone', (c) => {
+  check('panel on a phone: it fits the screen width and the script still does its work', c.box && c.box.width <= c.viewport.width + 1 && c.box.height <= 0.41 * c.viewport.height && c.viewport.width === 360 && eq(c.selected, BEST) && noErrors(c), JSON.stringify({ box: c.box, viewport: c.viewport }) + ' ' + show(c));
+});
+on('panel in the userscript sandbox', (c) => {
+  check('panel in the sandbox (isolated world, GM_addStyle): stored setting, one panel, the loaded line names the sandbox, nothing changes for the script', c.flag === 'panel' && c.panels === 1 && /loaded \(userscript sandbox\), debug log and panel on/.test(c.panelText) && eq(c.selected, BEST) && noErrors(c), `flag=${c.flag} panels=${c.panels} ${c.panelText.slice(0, 200)} ${show(c)}`);
+  check('panel in the sandbox: its buttons work there too', c.afterCopy === 'Copied' || /^Copy failed/.test(c.afterCopy), String(c.afterCopy));
+});
+on('panel: ?gbm-debug=off switches it off', (c) => {
+  check('panel: ?gbm-debug=off clears the setting and shows no panel', c.flag === null && c.panels === 0, `flag=${c.flag} panels=${c.panels}`);
+  check('panel off: the console gets the loaded line only, the script still works', c.lines.length === 1 && /debug log off: open the page with \?gbm-debug/.test(c.lines[0]) && eq(c.selected, BEST), show(c));
+});
+on('panel: "Turn off" removes it and the setting', (c) => {
+  check('panel: "Turn off" removes the panel and the stored setting', c.panels === 0 && c.flag === null, `flag=${c.flag} panels=${c.panels}`);
+});
+on('panel: "Close" removes it for this page only', (c) => {
+  check('panel: "Close" removes the panel but keeps the setting', c.panels === 0 && c.flag === 'panel', `flag=${c.flag} panels=${c.panels}`);
 });
 on('periodic table view: the script presses "List view"', (c) => {
   check('periodic table: the script switches to the list and chooses model and effort', eq(c.selected, BEST) && c.viewSwitches === 1 && c.tableOpens === 1 && noErrors(c), show(c));
