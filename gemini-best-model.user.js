@@ -11,6 +11,8 @@
 // @noframes
 // @grant        GM_addStyle
 // @license      MIT
+// @downloadURL  https://update.greasyfork.org/scripts/606962/Gemini%3A%20auto-select%20best%20model%20and%20thinking%20effort.user.js
+// @updateURL    https://update.greasyfork.org/scripts/606962/Gemini%3A%20auto-select%20best%20model%20and%20thinking%20effort.meta.js
 // ==/UserScript==
 
 /*
